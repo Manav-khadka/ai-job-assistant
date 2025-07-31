@@ -114,4 +114,3 @@ The project is organized into a `components` directory for reusable UI elements,
 ├── package.json
 └── README.md
 ```
-# ai-job-assistant
