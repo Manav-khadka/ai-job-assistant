@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 export const FileIcon: React.FC<{ className?: string }> = ({ className }) => (

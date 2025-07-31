@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 export const XMarkIcon: React.FC<{ className?: string, strokeWidth?: number }> = ({ className, strokeWidth = 2 }) => (
