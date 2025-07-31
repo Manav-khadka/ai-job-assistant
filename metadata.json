@@ -1,0 +1,5 @@
+{
+  "name": "AI Cover Letter Assistant",
+  "description": "An application that takes a user's resume and a job description to generate a short, engaging cover letter email using AI.",
+  "requestFramePermissions": []
+}
