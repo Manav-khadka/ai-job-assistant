@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
@@ -31,6 +32,29 @@ export interface GeneratedAssets {
   dsaQuestions?: DsaQuestion[];
   experiences?: InterviewExperience[];
 }
+
+export interface AnalysisResult {
+  overallImpression: string;
+  formattingAndReadability: string;
+  impactAndActionVerbs: string;
+  contactInfoFeedback: string;
+  experienceSectionFeedback: string;
+  skillsSectionFeedback: string;
+  projectsSectionFeedback: string;
+  educationSectionFeedback: string;
+  score?: number;
+  keywords?: {
+    present: string[];
+    missing: string[];
+  };
+  atsFriendliness?: {
+    score: number;
+    feedback: string;
+  };
+}
+
+export type ExperienceLevel = 'fresher' | 'mid-level' | 'senior';
+
 
 const structuredContentSchema = {
   type: Type.OBJECT,
@@ -219,4 +243,109 @@ export async function generateRecruitmentAssets(resume: string, jobDescription: 
     }
     throw new Error("An unexpected error occurred while communicating with the AI service.");
   }
+}
+
+const buildAnalysisSchema = (isTargeted: boolean) => {
+    const baseProperties: any = {
+        overallImpression: { type: Type.STRING, description: "A paragraph providing a high-level summary of the resume's strengths and weaknesses for the specified experience level." },
+        formattingAndReadability: { type: Type.STRING, description: "A paragraph providing feedback on the resume's layout, font choices, spacing, and overall clarity." },
+        impactAndActionVerbs: { type: Type.STRING, description: "A paragraph analyzing the use of action verbs. Provide specific 'before' and 'after' examples to improve impact." },
+        contactInfoFeedback: { type: Type.STRING, description: "A paragraph providing feedback on the contact information section, suggesting additions like a portfolio or noting any missing key info." },
+        experienceSectionFeedback: { type: Type.STRING, description: "A paragraph critiquing the Experience section. Focus on whether achievements are quantified and results-oriented. Provide examples for improvement." },
+        skillsSectionFeedback: { type: Type.STRING, description: "A paragraph analyzing the skills section. Comment on its organization and relevance for the specified experience level." },
+        projectsSectionFeedback: { type: Type.STRING, description: "A paragraph providing feedback on the Projects section. Are the projects relevant? Is the technology stack clear? Are the descriptions impactful?" },
+        educationSectionFeedback: { type: Type.STRING, description: "A paragraph providing feedback on the Education section, noting its placement and relevance for the specified experience level." },
+    };
+
+    let finalProperties = { ...baseProperties };
+    let requiredFields = [...Object.keys(baseProperties)];
+
+    if (isTargeted) {
+        finalProperties.score = { type: Type.INTEGER, description: "An integer score from 0 to 100 representing how well the resume is tailored to the job description." };
+        finalProperties.keywords = {
+            type: Type.OBJECT,
+            properties: {
+                present: { type: Type.ARRAY, description: "An array of important keywords from the job description found in the resume.", items: { type: Type.STRING } },
+                missing: { type: Type.ARRAY, description: "An array of crucial keywords from the job description MISSING from the resume.", items: { type: Type.STRING } }
+            },
+            required: ["present", "missing"]
+        };
+        requiredFields.push('score', 'keywords');
+    } else {
+        finalProperties.atsFriendliness = {
+            type: Type.OBJECT,
+            description: "An analysis of the resume's compatibility with Applicant Tracking Systems (ATS).",
+            properties: {
+                score: { type: Type.INTEGER, description: "An integer score from 0 to 100 representing how ATS-friendly the resume is, based on its structure, formatting, and keyword usage." },
+                feedback: { type: Type.STRING, description: "A detailed paragraph explaining the ATS score. Provide actionable advice on how to improve parsability, such as using standard section titles, avoiding complex layouts, and ensuring key information is easily machine-readable." }
+            },
+            required: ["score", "feedback"]
+        };
+        requiredFields.push('atsFriendliness');
+    }
+
+    return { type: Type.OBJECT, properties: finalProperties, required: requiredFields };
+};
+
+export async function analyzeResume(
+    resume: string, 
+    experienceLevel: ExperienceLevel, 
+    jobDescription?: string | null
+): Promise<AnalysisResult> {
+    const isTargetedAnalysis = !!jobDescription;
+
+    const analysisPrompt = `
+      You are an expert career coach and resume analyst with years of experience helping candidates at all levels (from fresher to senior) land jobs at top tech companies.
+      
+      Your task is to provide a detailed, objective analysis of the provided RESUME. 
+      The candidate has specified their experience level as: **${experienceLevel.toUpperCase()}**. All of your feedback must be tailored to the expectations for this level.
+
+      ${isTargetedAnalysis 
+        ? `This is a TARGETED analysis against the provided JOB DESCRIPTION. You must provide a tailoring score and keyword analysis.`
+        : `This is a GENERAL analysis. Focus on the overall quality of the resume for the candidate's experience level. You MUST provide an ATS Friendliness score and detailed feedback on the resume's parsability, structure, and keyword usage for automated screening systems.`
+      }
+      
+      Your analysis must be critical, constructive, and strictly follow the provided JSON schema. Do not include any introductory text or markdown formatting.
+
+      --- RESUME ---
+      ${resume}
+
+      ${isTargetedAnalysis ? `--- JOB DESCRIPTION ---\n${jobDescription}` : ''}
+    `;
+
+    const schema = buildAnalysisSchema(isTargetedAnalysis);
+
+    try {
+        const result = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: analysisPrompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: schema,
+            }
+        });
+
+        const jsonText = result.text.trim();
+        const parsedData = JSON.parse(jsonText) as AnalysisResult;
+
+        if (!parsedData.overallImpression) {
+            console.error("AI response for analysis was invalid:", jsonText);
+            throw new Error("AI analysis response is missing required fields.");
+        }
+
+        return parsedData;
+
+    } catch (error) {
+        console.error("Error analyzing resume:", error);
+        if (error instanceof SyntaxError) {
+            throw new Error(`The AI's analysis response was not valid JSON.`);
+        }
+        if (error instanceof Error) {
+            if (error.message.includes('API key not valid')) {
+                throw new Error('The provided API Key is not valid. Please check your configuration.');
+            }
+            throw new Error(`Failed to get analysis from AI: ${error.message}`);
+        }
+        throw new Error("An unexpected error occurred during resume analysis.");
+    }
 }
